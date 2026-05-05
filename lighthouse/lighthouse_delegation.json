@@ -21,11 +21,11 @@
     },
     "principalId": {
       "type": "string",
-      "metadata": { "description": "Object ID of the MSSP Azure Function Managed Identity" }
+      "metadata": { "description": "Object ID of the MSSP Logic App Managed Identity" }
     },
     "principalIdDisplayName": {
       "type": "string",
-      "defaultValue": "MSSP Sentinel Proxy MI",
+      "defaultValue": "MSSP CISO Report Logic App MI",
       "metadata": { "description": "Display name for the principal" }
     }
   },
