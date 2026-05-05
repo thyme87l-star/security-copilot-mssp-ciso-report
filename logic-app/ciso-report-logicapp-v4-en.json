@@ -12,22 +12,27 @@
     },
     "customerWorkspaceId": {
       "type": "string",
-      "defaultValue": "fd6b78ac-b340-46a0-bc4c-c2ad888c59e3",
       "metadata": {
-        "description": "iceteanow.com Sentinel workspace GUID"
+        "description": "Customer Sentinel Log Analytics workspace GUID"
       }
     },
     "customerSubscriptionId": {
       "type": "string",
-      "defaultValue": "6f2f16c4-d65f-4292-b3ed-32377ceff88e"
+      "metadata": {
+        "description": "Customer Azure subscription ID"
+      }
     },
     "customerResourceGroup": {
       "type": "string",
-      "defaultValue": "The-Sentinel-RG"
+      "metadata": {
+        "description": "Customer resource group containing the Sentinel workspace"
+      }
     },
     "customerWorkspaceName": {
       "type": "string",
-      "defaultValue": "Default-Sentinel"
+      "metadata": {
+        "description": "Customer Log Analytics workspace name"
+      }
     }
   },
   "variables": {
