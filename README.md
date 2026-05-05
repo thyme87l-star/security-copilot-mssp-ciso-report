@@ -59,10 +59,11 @@ az deployment group create \
     customerWorkspaceName="<顧客ワークスペース名>"
 
 # Logic App MI の principalId を取得（Step 2 で使用）
-az deployment group show \
+az resource show \
+  --resource-type Microsoft.Logic/workflows \
   --resource-group MSSP-CISO-RG \
-  --name ciso-report-logicapp-v5-ja \
-  --query "properties.outputs.logicAppPrincipalId.value" -o tsv
+  --name dsv011-app1-ciso-report \
+  --query "identity.principalId" -o tsv
 ```
 
 ### Step 2: Lighthouse 委任の設定
