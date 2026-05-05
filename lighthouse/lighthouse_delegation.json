@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "registrationDefinitionName": {
+      "type": "string",
+      "defaultValue": "MSSP Sentinel Query Delegation",
+      "metadata": { "description": "Lighthouse registration definition display name" }
+    },
+    "registrationDefinitionGuid": {
+      "type": "string",
+      "metadata": { "description": "GUID for the registration definition (generate with New-Guid)" }
+    },
+    "registrationAssignmentGuid": {
+      "type": "string",
+      "metadata": { "description": "GUID for the registration assignment (generate with New-Guid)" }
+    },
+    "managedByTenantId": {
+      "type": "string",
+      "metadata": { "description": "MSSP tenant ID that will manage the customer resources" }
+    },
+    "principalId": {
+      "type": "string",
+      "metadata": { "description": "Object ID of the MSSP Azure Function Managed Identity" }
+    },
+    "principalIdDisplayName": {
+      "type": "string",
+      "defaultValue": "MSSP Sentinel Proxy MI",
+      "metadata": { "description": "Display name for the principal" }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ManagedServices/registrationDefinitions",
+      "apiVersion": "2022-10-01",
+      "name": "[parameters('registrationDefinitionGuid')]",
+      "properties": {
+        "registrationDefinitionName": "[parameters('registrationDefinitionName')]",
+        "description": "Delegates Log Analytics Reader to MSSP Function App MI for cross-tenant Sentinel queries",
+        "managedByTenantId": "[parameters('managedByTenantId')]",
+        "authorizations": [
+          {
+            "principalId": "[parameters('principalId')]",
+            "roleDefinitionId": "73c42c96-874c-492b-b04d-ab87d138a893",
+            "principalIdDisplayName": "[parameters('principalIdDisplayName')]"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.ManagedServices/registrationAssignments",
+      "apiVersion": "2022-10-01",
+      "name": "[parameters('registrationAssignmentGuid')]",
+      "dependsOn": [
+        "[parameters('registrationDefinitionGuid')]"
+      ],
+      "properties": {
+        "registrationDefinitionId": "[subscriptionResourceId('Microsoft.ManagedServices/registrationDefinitions', parameters('registrationDefinitionGuid'))]"
+      }
+    }
+  ]
+}

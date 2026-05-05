@@ -1,0 +1,395 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "4.0.0.0",
+  "parameters": {
+    "logicAppName": {
+      "type": "string",
+      "defaultValue": "dsv011-app1-ciso-report"
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "eastus"
+    },
+    "customerWorkspaceId": {
+      "type": "string",
+      "defaultValue": "fd6b78ac-b340-46a0-bc4c-c2ad888c59e3",
+      "metadata": {
+        "description": "iceteanow.com Sentinel workspace GUID"
+      }
+    },
+    "customerSubscriptionId": {
+      "type": "string",
+      "defaultValue": "6f2f16c4-d65f-4292-b3ed-32377ceff88e"
+    },
+    "customerResourceGroup": {
+      "type": "string",
+      "defaultValue": "The-Sentinel-RG"
+    },
+    "customerWorkspaceName": {
+      "type": "string",
+      "defaultValue": "Default-Sentinel"
+    }
+  },
+  "variables": {
+    "securityCopilotConnectionName": "securitycopilot-connection",
+    "securityCopilotApiId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/securitycopilot')]",
+    "armQueryUrl": "[concat('https://management.azure.com/subscriptions/', parameters('customerSubscriptionId'), '/resourceGroups/', parameters('customerResourceGroup'), '/providers/Microsoft.OperationalInsights/workspaces/', parameters('customerWorkspaceName'), '/query?api-version=2017-10-01')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('logicAppName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "MgmtID": "DSV-011",
+        "Project": "Defender-Azure-Sentinel",
+        "Purpose": "App1 CISO Monthly Report - Full Integration v4",
+        "CreatedBy": "Orchestrator"
+      },
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            },
+            "customerWorkspaceId": {
+              "defaultValue": "[parameters('customerWorkspaceId')]",
+              "type": "String"
+            },
+            "armQueryUrl": {
+              "defaultValue": "[variables('armQueryUrl')]",
+              "type": "String"
+            }
+          },
+          "triggers": {
+            "manual": {
+              "type": "Request",
+              "kind": "Http",
+              "inputs": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reportMonth": {
+                      "type": "string",
+                      "description": "Target month in YYYY-MM format (default: previous month)"
+                    },
+                    "customerName": {
+                      "type": "string",
+                      "description": "Customer display name for the report"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "actions": {
+            "Initialize_Variables": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "reportMonth",
+                    "type": "string",
+                    "value": "@{coalesce(triggerBody()?['reportMonth'], formatDateTime(addDays(utcNow(), -30), 'yyyy-MM'))}"
+                  }
+                ]
+              },
+              "runAfter": {}
+            },
+            "Init_CustomerName": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "customerName",
+                    "type": "string",
+                    "value": "@{coalesce(triggerBody()?['customerName'], 'Customer')}"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Initialize_Variables": ["Succeeded"]
+              }
+            },
+            "Init_AlertTableRows": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "alertTableRows",
+                    "type": "string",
+                    "value": ""
+                  }
+                ]
+              },
+              "runAfter": {
+                "Init_CustomerName": ["Succeeded"]
+              }
+            },
+            "Init_IncidentTableRows": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "incidentTableRows",
+                    "type": "string",
+                    "value": ""
+                  }
+                ]
+              },
+              "runAfter": {
+                "Init_AlertTableRows": ["Succeeded"]
+              }
+            },
+            "KQL_Incident_Summary": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@{parameters('armQueryUrl')}",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "audience": "https://management.azure.com"
+                },
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "query": "SecurityIncident | where TimeGenerated >= ago(30d) | summarize Total=count(), High=countif(Severity=='High'), Medium=countif(Severity=='Medium'), Low=countif(Severity=='Low'), Closed=countif(Status=='Closed'), Active=countif(Status=='Active' or Status=='New')",
+                  "timespan": "P30D"
+                }
+              },
+              "runAfter": {
+                "Init_IncidentTableRows": ["Succeeded"]
+              }
+            },
+            "KQL_Incident_Daily_Trend": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@{parameters('armQueryUrl')}",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "audience": "https://management.azure.com"
+                },
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "query": "SecurityIncident | where TimeGenerated >= ago(30d) | summarize Count=count() by bin(TimeGenerated, 1d), Severity | order by TimeGenerated asc",
+                  "timespan": "P30D"
+                }
+              },
+              "runAfter": {
+                "Init_IncidentTableRows": ["Succeeded"]
+              }
+            },
+            "KQL_Top_Alerts": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@{parameters('armQueryUrl')}",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "audience": "https://management.azure.com"
+                },
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "query": "SecurityAlert | where TimeGenerated >= ago(30d) | summarize Count=count() by AlertName, AlertSeverity | order by Count desc | take 10",
+                  "timespan": "P30D"
+                }
+              },
+              "runAfter": {
+                "Init_IncidentTableRows": ["Succeeded"]
+              }
+            },
+            "KQL_High_Incidents_Detail": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@{parameters('armQueryUrl')}",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "audience": "https://management.azure.com"
+                },
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "query": "SecurityIncident | where TimeGenerated >= ago(30d) and Severity == 'High' | project Title, Status, CreatedTime, ClosedTime, Owner=tostring(Owner.assignedTo), AlertsCount=array_length(AlertIds) | order by CreatedTime desc | take 5",
+                  "timespan": "P30D"
+                }
+              },
+              "runAfter": {
+                "Init_IncidentTableRows": ["Succeeded"]
+              }
+            },
+            "Build_Alert_Rows": {
+              "type": "Foreach",
+              "foreach": "@body('KQL_Top_Alerts')?['tables']?[0]?['rows']",
+              "actions": {
+                "Append_Alert_Row": {
+                  "type": "AppendToStringVariable",
+                  "inputs": {
+                    "name": "alertTableRows",
+                    "value": "<tr><td>@{items('Build_Alert_Rows')?[0]}</td><td><span class=\"badge badge-@{toLower(coalesce(items('Build_Alert_Rows')?[1], 'medium'))}\">@{items('Build_Alert_Rows')?[1]}</span></td><td style=\"text-align:right;font-weight:600\">@{items('Build_Alert_Rows')?[2]}</td></tr>"
+                  }
+                }
+              },
+              "runAfter": {
+                "KQL_Top_Alerts": ["Succeeded"]
+              },
+              "runtimeConfiguration": {
+                "concurrency": {
+                  "repetitions": 1
+                }
+              }
+            },
+            "Build_Incident_Rows": {
+              "type": "Foreach",
+              "foreach": "@body('KQL_High_Incidents_Detail')?['tables']?[0]?['rows']",
+              "actions": {
+                "Append_Incident_Row": {
+                  "type": "AppendToStringVariable",
+                  "inputs": {
+                    "name": "incidentTableRows",
+                    "value": "<tr><td>@{items('Build_Incident_Rows')?[0]}</td><td>@{items('Build_Incident_Rows')?[1]}</td><td>@{formatDateTime(items('Build_Incident_Rows')?[2], 'yyyy-MM-dd HH:mm')}</td><td style=\"text-align:right\">@{items('Build_Incident_Rows')?[5]}</td></tr>"
+                  }
+                }
+              },
+              "runAfter": {
+                "KQL_High_Incidents_Detail": ["Succeeded"]
+              },
+              "runtimeConfiguration": {
+                "concurrency": {
+                  "repetitions": 1
+                }
+              }
+            },
+            "Copilot_Executive_Analysis": {
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['securitycopilot']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/process-prompt",
+                "body": {
+                  "PromptContent": "@{concat('You are a senior security analyst writing a CISO monthly report. Write in direct, professional prose (NOT JSON, NOT markdown code blocks). Customer: ', variables('customerName'), '. Period: ', variables('reportMonth'), '. Based on the following Sentinel data from the past 30 days, write two paragraphs: (1) Executive Summary: 3-4 sentences summarizing the overall security posture, total incidents, and most critical findings. (2) Risk Assessment: 2-3 sentences identifying the key risks. Use plain HTML formatting: wrap each paragraph in <p> tags. Do NOT output JSON. Do NOT use code fences. Data: Incident Summary: ', string(body('KQL_Incident_Summary')?['tables']?[0]?['rows']), ' (columns: Total, High, Medium, Low, Closed, Active). Top Alerts: ', string(body('KQL_Top_Alerts')?['tables']?[0]?['rows']), ' (columns: AlertName, Severity, Count). High Severity Incidents: ', string(body('KQL_High_Incidents_Detail')?['tables']?[0]?['rows']), ' (columns: Title, Status, CreatedTime, ClosedTime, Owner, AlertsCount).')}"
+                }
+              },
+              "runAfter": {
+                "KQL_Incident_Summary": ["Succeeded"],
+                "KQL_Incident_Daily_Trend": ["Succeeded"],
+                "KQL_Top_Alerts": ["Succeeded"],
+                "KQL_High_Incidents_Detail": ["Succeeded"]
+              }
+            },
+            "Copilot_Threat_Landscape": {
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['securitycopilot']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/process-prompt",
+                "body": {
+                  "PromptContent": "Using Microsoft Defender Threat Intelligence, provide a threat landscape summary for the past month relevant to a mid-size enterprise. Write in professional prose using plain HTML formatting. Structure your response with: (1) A <h4>Active Threat Actors</h4> section with a brief paragraph about 2-3 key threat actors and their typical targets/methods. (2) A <h4>Notable TTPs</h4> section with a <ul> bullet list of 4-6 key techniques observed (include MITRE ATT&CK IDs). (3) A <h4>Emerging Threats</h4> section with a short paragraph about new developments to watch. Do NOT output JSON. Do NOT use code fences. Do NOT use markdown formatting."
+                }
+              },
+              "runAfter": {
+                "Copilot_Executive_Analysis": ["Succeeded"]
+              }
+            },
+            "Copilot_Recommendations": {
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['securitycopilot']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/process-prompt",
+                "body": {
+                  "PromptContent": "@{concat('Based on the security data analysis for ', variables('customerName'), ' (', variables('reportMonth'), '), provide exactly 5 prioritized recommendations as an HTML ordered list (<ol><li>). Each recommendation should be 1-2 sentences, actionable, and specific to the observed threats. Consider: incident volumes (', string(body('KQL_Incident_Summary')?['tables']?[0]?['rows']?[0]), '), top alerts, and active threats. Format as plain HTML: start with a brief <p> introducing the recommendations, then an <ol> with <li> items. Do NOT output JSON. Do NOT use code fences.')}"
+                }
+              },
+              "runAfter": {
+                "Copilot_Threat_Landscape": ["Succeeded"]
+              }
+            },
+            "Generate_HTML_Report": {
+              "type": "Compose",
+              "inputs": "@concat('<!DOCTYPE html><html lang=\"ja\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\"><title>CISO Monthly Security Report - ', variables('customerName'), '</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:\"Yu Gothic UI\",\"Segoe UI\",sans-serif;background:#f5f5f5;color:#1a1a1a;font-size:15px;line-height:1.6}.slide{max-width:1100px;margin:20px auto;background:#fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.08);min-height:600px;padding:40px 50px;page-break-after:always}.slide-title{background:#0078d4;color:#fff;padding:12px 24px;border-radius:4px;font-size:20px;margin-bottom:24px}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{padding:10px 14px;text-align:left;border-bottom:1px solid #e0e0e0}th{background:#f0f6ff;font-weight:600}tr:nth-child(even){background:#fafafa}.badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:13px;font-weight:600}.badge-high{background:#fdf3f3;color:#d13438}.badge-medium{background:#fef8f3;color:#ca5010}.badge-low{background:#f0fff0;color:#107c10}.badge-informational{background:#f0f6ff;color:#0078d4}.metric{display:inline-block;text-align:center;padding:16px 24px;background:#f7f9fc;border-radius:8px;margin:8px}.metric-value{font-size:32px;font-weight:700;color:#0078d4}.metric-label{font-size:13px;color:#666;margin-top:4px}.section-header{font-size:17px;font-weight:600;color:#0078d4;margin:20px 0 12px;border-bottom:2px solid #0078d4;padding-bottom:6px}h4{color:#0078d4;margin:18px 0 10px;font-size:16px}ul,ol{margin:12px 0 12px 24px}li{margin:6px 0}p{margin:10px 0}.footer{text-align:center;color:#999;font-size:12px;margin-top:30px;padding-top:16px;border-top:1px solid #eee}.report-meta{background:#f7f9fc;padding:12px 20px;border-radius:6px;margin-bottom:20px;border-left:4px solid #0078d4}</style></head><body>', '<div class=\"slide\"><div class=\"slide-title\">1. Executive Summary</div><div class=\"report-meta\"><strong>Customer:</strong> ', variables('customerName'), ' &nbsp;|&nbsp; <strong>Period:</strong> ', variables('reportMonth'), ' &nbsp;|&nbsp; <strong>Generated:</strong> ', formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm'), ' UTC</div><div style=\"margin-top:20px\">', body('Copilot_Executive_Analysis')?['EvaluationResultContent'], '</div></div>', '<div class=\"slide\"><div class=\"slide-title\">2. Monthly Incident Summary</div><div style=\"display:flex;gap:16px;flex-wrap:wrap;margin:20px 0;justify-content:center\">', '<div class=\"metric\"><div class=\"metric-value\">', string(body('KQL_Incident_Summary')?['tables']?[0]?['rows']?[0]?[0]), '</div><div class=\"metric-label\">Total Incidents</div></div>', '<div class=\"metric\"><div class=\"metric-value\" style=\"color:#d13438\">', string(body('KQL_Incident_Summary')?['tables']?[0]?['rows']?[0]?[1]), '</div><div class=\"metric-label\">High Severity</div></div>', '<div class=\"metric\"><div class=\"metric-value\" style=\"color:#ca5010\">', string(body('KQL_Incident_Summary')?['tables']?[0]?['rows']?[0]?[2]), '</div><div class=\"metric-label\">Medium Severity</div></div>', '<div class=\"metric\"><div class=\"metric-value\" style=\"color:#107c10\">', string(body('KQL_Incident_Summary')?['tables']?[0]?['rows']?[0]?[3]), '</div><div class=\"metric-label\">Low Severity</div></div>', '<div class=\"metric\"><div class=\"metric-value\" style=\"color:#666\">', string(body('KQL_Incident_Summary')?['tables']?[0]?['rows']?[0]?[4]), '</div><div class=\"metric-label\">Closed</div></div>', '<div class=\"metric\"><div class=\"metric-value\" style=\"color:#d13438\">', string(body('KQL_Incident_Summary')?['tables']?[0]?['rows']?[0]?[5]), '</div><div class=\"metric-label\">Active/New</div></div>', '</div><h4>High Severity Incidents (Recent 5)</h4><table><tr><th>Title</th><th>Status</th><th>Created</th><th style=\"text-align:right\">Alerts</th></tr>', variables('incidentTableRows'), '</table></div>', '<div class=\"slide\"><div class=\"slide-title\">3. Threat Landscape</div>', body('Copilot_Threat_Landscape')?['EvaluationResultContent'], '</div>', '<div class=\"slide\"><div class=\"slide-title\">4. Top Alerts (Past 30 Days)</div><table><tr><th>Alert Name</th><th>Severity</th><th style=\"text-align:right\">Count</th></tr>', variables('alertTableRows'), '</table></div>', '<div class=\"slide\"><div class=\"slide-title\">5. Recommendations</div>', body('Copilot_Recommendations')?['EvaluationResultContent'], '</div>', '<div class=\"footer\">Generated by MSSP Automated CISO Report System | Powered by Microsoft Security Copilot + Sentinel | DSV-011 | ', formatDateTime(utcNow(), 'yyyy-MM-ddTHH:mm:ssZ'), '</div></body></html>')",
+              "runAfter": {
+                "Copilot_Recommendations": ["Succeeded"],
+                "Build_Alert_Rows": ["Succeeded"],
+                "Build_Incident_Rows": ["Succeeded"]
+              }
+            },
+            "Response": {
+              "type": "Response",
+              "kind": "Http",
+              "inputs": {
+                "statusCode": 200,
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "status": "success",
+                  "reportHtml": "@{outputs('Generate_HTML_Report')}",
+                  "metadata": {
+                    "customer": "@{variables('customerName')}",
+                    "period": "@{variables('reportMonth')}",
+                    "generatedAt": "@{utcNow()}",
+                    "incidentSummary": "@body('KQL_Incident_Summary')",
+                    "copilotSessionId": "@body('Copilot_Executive_Analysis')?['sessionId']"
+                  }
+                }
+              },
+              "runAfter": {
+                "Generate_HTML_Report": ["Succeeded"]
+              }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "securitycopilot": {
+                "connectionId": "[resourceId('Microsoft.Web/connections', variables('securityCopilotConnectionName'))]",
+                "connectionName": "[variables('securityCopilotConnectionName')]",
+                "id": "[variables('securityCopilotApiId')]"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "logicAppResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Logic/workflows', parameters('logicAppName'))]"
+    },
+    "logicAppPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Logic/workflows', parameters('logicAppName')), '2019-05-01', 'Full').identity.principalId]"
+    }
+  }
+}
